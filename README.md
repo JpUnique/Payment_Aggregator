@@ -1,4 +1,4 @@
-# Fiat Ramp Service
+# Payment Aggregators System
 
 ## Overview
 This project is a **Golang-based fiat on/off-ramp service** that integrates with **Onramper** for transaction processing also authentication and KYC Synchronization with TerraceKYC based on the  Transaction status. It ensures secure and reliable fiat-to-crypto transactions using webhook handling, authentication, and database integration.
@@ -78,14 +78,6 @@ psql -h localhost -U postgres -d postgres -p 5432
 
 DATABASE_URL=postgres://postgres:postgrespassword@localhost:5432/postgres?sslmode=disable
 HASURA_ENDPOINT=http://localhost:8080/v1/graphql
-
-
-## Contributors ✨
-
-Thanks to these amazing people:
-
-- [Ayodeji Akinola](https://github.com/TheDhejavu) - Instructor
-- [Nik Ogura](https://github.com/nikogura) - Supervisor
 
 ---
  **Developed by Johnpaul**
