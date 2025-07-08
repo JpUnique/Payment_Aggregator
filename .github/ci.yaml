@@ -1,0 +1,134 @@
+name: CI
+
+on:
+  push:
+    branches:
+      - main
+
+permissions:
+  id-token: write
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    services:
+      redis:
+        image: redis
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+      postgres:
+        image: postgres:15.7-alpine
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: postgres
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+        ports:
+          - 5432:5432
+
+
+    concurrency: ci_test
+    outputs:
+      semver: ${{steps.semver.outputs.version_tag}}
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Semver
+        uses: paulhatch/semantic-version@v5.1.0
+        with:
+          bump_each_commit: true
+        id: semver
+
+      - name: Setup SSH
+        uses: webfactory/ssh-agent@v0.9.0
+        with:
+          ssh-private-key: ${{ secrets.INFRA_BOT_SSH_KEY }}
+
+      - name: Configure Git for SSH
+        run: |
+          git config --global url."git@github.com:".insteadOf "https://github.com/"
+
+      - name: Checkout Database
+        uses: actions/checkout@v4
+        with:
+          repository: subdialia/database
+          path: database
+          ref: 'main'
+          fetch-depth: 0
+
+      - name: Create DB Roles
+        run: PGPASSWORD=postgres psql -U postgres -h ${POSTGRES_HOST:-localhost} -d postgres -f database/mds/00_roles.sql
+
+      - name: Initialize Database
+        run: |
+          cd database && make initmds
+
+      - name: Test MDS Connection
+        run: PGPASSWORD=mds_admin psql --host=localhost --username=mds_admin --dbname=mds_db1 -c "\\dt"
+
+      - name: Set up Go
+        uses: actions/setup-go@v3
+        with:
+          go-version: 1.23
+
+      - name: Configure Go for Private Modules
+        run: |
+          go env -w GOPRIVATE="github.com/subdialia/*"
+
+      - name: Run Tests
+        env:
+          AWS_REGION: eu-west-2
+          CACHE_HOST: 127.0.0.1:6379
+          DATABASE_HOST: 127.0.0.1
+          DATABASE_NAME: mds_db1
+          DATABASE_PASSWORD: mds_admin
+          DATABASE_PORT: 5432
+          DATABASE_USERNAME: mds_admin
+
+        run: |
+          go test -v ./...
+
+      - name: Lint
+        uses: golangci/golangci-lint-action@v8
+        with:
+          version: latest
+
+      - name: Tag Repo
+        uses: mathieudutour/github-tag-action@v6.1
+        with:
+          github_token: ${{secrets.TAGGING_PAT}}
+          custom_tag: ${{steps.semver.outputs.version_tag}}
+          tag_prefix: ""
+
+      - name: Publish Release
+        uses: actions/create-release@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.TAGGING_PAT }}
+        with:
+          tag_name: ${{ steps.semver.outputs.version_tag }}
+          release_name: ${{ steps.semver.outputs.version_tag }}
+          draft: false
+          prerelease: false
+
+
+  publish:
+    needs: test
+    uses: subdialia/control-continuous-integration/.github/workflows/image-publish-dev.yaml@main
+    secrets: inherit
+    with:
+      SEMVER: ${{needs.test.outputs.semver}}
+      REPOSITORY: ${{ github.event.repository.name }}
